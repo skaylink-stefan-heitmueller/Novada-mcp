@@ -7,6 +7,8 @@
   "scripts": {
     "dev": "vercel dev",
     "deploy": "vercel deploy --prod",
+    "build": "tsc -p tsconfig.build.json && cp api/_polyfills.js dist/api/ && cp -R vendor/. dist/vendor/",
+    "start": "node dist/server.mjs",
     "typecheck": "tsc --noEmit",
     "lint": "tsc --noEmit",
     "test": "node --test \"test/**/*.test.mjs\"",

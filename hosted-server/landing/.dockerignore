@@ -1,0 +1,5 @@
+# Keep the build context to publishable content only.
+Dockerfile
+.dockerignore
+*.md
+og-image.html

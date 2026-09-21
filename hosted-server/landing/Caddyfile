@@ -1,0 +1,60 @@
+{
+	# No admin API. It would otherwise listen on localhost:2019 inside the
+	# container; an immutable image has nothing to reconfigure at runtime.
+	admin off
+	# TLS terminates upstream (ingress / CDN / the platform's router), so serve
+	# plain HTTP. Left on, Caddy would try to provision certificates for a
+	# hostname it does not own.
+	auto_https off
+	# Structured logs to stdout so `docker logs` stays machine-readable.
+	log {
+		output stdout
+		format json
+	}
+}
+
+# 8081 rather than 80 so the process needs no privileged port and can drop to an
+# unprivileged uid.
+:8081 {
+	root * /srv
+	encode zstd gzip
+	file_server
+
+	# Vercel's `cleanUrls: true` equivalent. Every page links to /playground,
+	# /chat, /tools, /pricing, /faq, /configure, /dashboard with no .html
+	# suffix, so without this fallback all internal navigation 404s.
+	try_files {path} {path}.html {path}/index.html
+
+	# Liveness target for HEALTHCHECK. Independent of page content, so it still
+	# answers if the HTML is broken or missing.
+	handle /health {
+		header Content-Type application/json
+		respond `{"ok":true,"service":"novada-landing"}` 200
+	}
+
+	header {
+		# chat.html and playground.html carry the caller's Novada API key in the
+		# query string (?token=…), and these pages pull Tailwind, GSAP, Lenis and
+		# Google Fonts from third-party CDNs. Without this, the Referer header
+		# would hand those hosts the full URL — including the key.
+		Referrer-Policy "no-referrer"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "SAMEORIGIN"
+		Cross-Origin-Opener-Policy "same-origin"
+		# Caddy's default; stated explicitly since it is a fingerprinting detail.
+		-Server
+	}
+
+	# Cache-Control is split across two mutually exclusive matchers rather than a
+	# global default plus an override: when the same field is set both in the
+	# global header block and in a matcher-scoped one, the global value wins and
+	# the override is silently ignored.
+	#
+	# Images and fonts are the only genuinely cacheable assets here. Everything
+	# else revalidates, because shared.css and shared.js are unversioned and a
+	# long TTL would strand clients on stale UI after a deploy.
+	@immutable path *.png *.jpg *.jpeg *.gif *.svg *.ico *.webp *.woff *.woff2
+	@revalidate not path *.png *.jpg *.jpeg *.gif *.svg *.ico *.webp *.woff *.woff2
+	header @immutable Cache-Control "public, max-age=2592000"
+	header @revalidate Cache-Control "no-cache"
+}

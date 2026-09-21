@@ -1,0 +1,13 @@
+# Build context hygiene: keep the image small and never bake secrets in.
+node_modules
+dist
+.vercel
+.env*
+*.log
+.git
+.gitignore
+Dockerfile
+.dockerignore
+test
+local-harness.mts
+*.md

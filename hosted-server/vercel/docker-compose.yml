@@ -1,0 +1,50 @@
+# Local/self-hosted run of the hosted MCP endpoint.
+#
+# The handler requires an Upstash-compatible Redis REST API (quota + rate-limit
+# counters; it fails loud with KV_NOT_CONFIGURED rather than bypassing limits).
+# In production point KV_REST_API_URL/TOKEN at real Upstash; locally the
+# serverless-redis-http shim in front of plain Redis satisfies the same contract.
+#
+#   docker compose up --build
+#   curl -s localhost:8080/health
+#
+services:
+  mcp:
+    build: .
+    ports:
+      - "8080:8080"
+    # Must exceed SHUTDOWN_GRACE_MS in server.mts (25s) or compose SIGKILLs the
+    # container mid-drain. The compose/docker default is only 10s.
+    stop_grace_period: 30s
+    environment:
+      # Upstream Novada API key. Provide via shell env or a .env file — never
+      # hardcode it here.
+      NOVADA_API_KEY: ${NOVADA_API_KEY:?set NOVADA_API_KEY}
+      # Operator acknowledgement of the stub auth layer — see PRE_LAUNCH_CHECKLIST.md.
+      STUB_AUTH_WARNING_ACCEPTED: ${STUB_AUTH_WARNING_ACCEPTED:-false}
+      RATE_LIMIT_PER_MIN: "60"
+      FREE_PLAN_MONTHLY_QUOTA: "5000"
+      KV_REST_API_URL: http://kv:80
+      KV_REST_API_TOKEN: local-dev-token
+    depends_on:
+      kv:
+        condition: service_started
+
+  kv:
+    image: hiett/serverless-redis-http:latest
+    environment:
+      SRH_MODE: env
+      SRH_TOKEN: local-dev-token
+      SRH_CONNECTION_STRING: redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--save", "", "--appendonly", "no"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5

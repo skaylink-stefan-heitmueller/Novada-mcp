@@ -1,0 +1,14 @@
+{
+  "//": "Emit-enabled variant of tsconfig.json, used only for container/standalone builds. tsconfig.json stays noEmit for `npm run typecheck`.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "rootDir": ".",
+    "outDir": "dist",
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "declaration": false,
+    "sourceMap": true
+  },
+  "include": ["api/**/*.ts", "server.mts"]
+}
