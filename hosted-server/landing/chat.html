@@ -759,13 +759,13 @@ function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-the
       </button>
       <button class="sugg-card disabled" data-sugg="1">
         <span class="sugg-spark">✦</span>
-        <span class="sugg-text en">Scrape pricing and features from a competitor's website</span>
-        <span class="sugg-text zh">抓取竞品网站的定价和功能介绍</span>
+        <span class="sugg-text en">Extract pricing and features from https://www.novada.com/pricing</span>
+        <span class="sugg-text zh">抓取 https://www.novada.com/pricing 的定价和功能介绍</span>
       </button>
       <button class="sugg-card disabled" data-sugg="2">
         <span class="sugg-spark">✦</span>
-        <span class="sugg-text en">Map all pages on a website and find broken links</span>
-        <span class="sugg-text zh">生成网站的完整页面地图，找出失效链接</span>
+        <span class="sugg-text en">Map all pages on https://www.novada.com</span>
+        <span class="sugg-text zh">生成 https://www.novada.com 的完整页面地图</span>
       </button>
       <button class="sugg-card disabled" data-sugg="3">
         <span class="sugg-spark">✦</span>
@@ -886,14 +886,14 @@ const toast = document.getElementById('toast');
 
 const SUGGESTIONS_EN = [
   'Search for top AI tools and startups from this week',
-  'Scrape pricing and features from a competitor\'s website',
-  'Map all pages on a website and find broken links',
+  'Extract pricing and features from https://www.novada.com/pricing',
+  'Map all pages on https://www.novada.com',
   'Find the latest research papers on LLM agents and RAG',
 ];
 const SUGGESTIONS_ZH = [
   '搜索本周热门 AI 工具和初创公司',
-  '抓取竞品网站的定价和功能介绍',
-  '生成网站的完整页面地图，找出失效链接',
+  '抓取 https://www.novada.com/pricing 的定价和功能介绍',
+  '生成 https://www.novada.com 的完整页面地图',
   '查找关于 LLM 智能体和 RAG 的最新研究论文',
 ];
 
@@ -990,6 +990,17 @@ sendBtn.addEventListener('click',  () => doSend(chatInput.value));
 sendBtn2.addEventListener('click', () => doSend(chatInput2.value));
 
 // ── Intent router ──────────────────────────────────────────
+// Every route below must satisfy the tool's own inputSchema — the endpoint
+// validates arguments with Zod and returns "Validation failed for <tool>"
+// otherwise. Two rules keep this honest:
+//   1. Only route to tools that exist in the hosted catalog (there is no
+//      novada_verify and no novada_proxy_residential — proxy type is an
+//      argument of novada_proxy).
+//   2. A tool whose schema requires a URL only gets called when the message
+//      actually contains one; otherwise ask for it instead of inventing a
+//      placeholder. Same for novada_scrape, which requires platform +
+//      operation + that operation's own params — none of which can be guessed
+//      from arbitrary prose.
 const URL_RE = /\bhttps?:\/\/[^\s)}\]]+/i;
 
 function extractUrl(text) {
@@ -997,42 +1008,100 @@ function extractUrl(text) {
   return m ? m[0].replace(/[)\]},;.]+$/, '') : null;
 }
 
+/** Registrable-ish domain of a URL: 'https://www.amazon.com/dp/x' → 'amazon.com'. */
+function domainOf(url) {
+  try {
+    const host = new URL(url).hostname.toLowerCase().replace(/^(www|m|mobile)\./, '');
+    const parts = host.split('.');
+    return parts.length > 2 ? parts.slice(-2).join('.') : host;
+  } catch {
+    return null;
+  }
+}
+
+// Domains where a bare URL is enough to drive novada_scrape: the operation's
+// only required param is `url`. Slugs verified against the scraper catalog
+// (data/scraper_catalog.js, 2026-07-13 verification); `match` narrows ops that
+// only accept one URL shape, so anything else falls through to novada_extract.
+const SCRAPE_URL_OPS = {
+  'amazon.com':   { operation: 'amazon_product_url' },
+  'walmart.com':  { operation: 'walmart_product_url' },
+  'shein.com':    { operation: 'shein_product_url' },
+  'github.com':   { operation: 'github_repository_url' },
+  'linkedin.com': { operation: 'linkedin_company_information_url', match: /\/company\//i },
+  'tiktok.com':   { operation: 'tiktok_posts_url',                 match: /\/video\//i },
+  'youtube.com':  { operation: 'youtube_video-post_url',           match: /\/watch\?|\/shorts\//i },
+  'perplexity.ai':{ operation: 'perplexity_answer_url' },
+};
+
+/** novada_scrape for known platforms, novada_extract for every other URL. */
+function routeUrl(url) {
+  const domain = domainOf(url);
+  const op = domain ? SCRAPE_URL_OPS[domain] : null;
+  if (op && (!op.match || op.match.test(url))) {
+    return {
+      tool: 'novada_scrape',
+      args: { platform: domain, operation: op.operation, params: { url }, limit: 20, format: 'markdown' },
+    };
+  }
+  return { tool: 'novada_extract', args: { url } };
+}
+
+/** Shown instead of calling a URL-requiring tool with no URL in the message. */
+const NEED_URL = {
+  en: 'I need a URL for that one. Paste the page you want me to work on — e.g. “extract https://example.com/pricing” or “map https://example.com”.',
+  zh: '这个操作需要一个网址。请粘贴目标页面，例如「extract https://example.com/pricing」或「map https://example.com」。',
+};
+
 function routeTool(msg) {
   const m = msg.toLowerCase();
   const url = extractUrl(msg);
 
   if (/^crawl\b/.test(m)) {
-    return { tool: 'novada_crawl', args: { url: url || msg.replace(/^crawl\s*/i,'').trim(), max_pages: 5, max_depth: 2 } };
+    // max_pages only — novada_crawl has no max_depth param (depth is implicit).
+    return url ? { tool: 'novada_crawl', args: { url, max_pages: 5 } } : { guidance: NEED_URL };
   }
   if (/^map\b/.test(m) || /\bsitemap\b/.test(m) || /map all pages/.test(m)) {
-    return { tool: 'novada_map', args: { url: url || msg.replace(/^map\s*/i,'').trim() } };
+    return url ? { tool: 'novada_map', args: { url } } : { guidance: NEED_URL };
   }
   if (/^extract\b/.test(m)) {
-    return { tool: 'novada_extract', args: { url: url || msg.replace(/^extract\s*/i,'').trim() } };
+    return url ? { tool: 'novada_extract', args: { url } } : { guidance: NEED_URL };
   }
+  // No verify tool on the hosted catalog — research answers claims with sources.
   if (/\bverify\b/.test(m) || /\bfact[\s-]?check\b/.test(m) || (/\bis\b/.test(m) && /\btrue\b/.test(m))) {
-    return { tool: 'novada_verify', args: { claim: msg } };
+    return { tool: 'novada_research', args: { query: msg, depth: 'quick' } };
   }
-  if (/\bdiscover\b/.test(m) || /find links/.test(m) || /\blinks on\b/.test(m)) {
-    return { tool: 'novada_discover', args: { url: url || msg } };
+  // Link discovery is novada_map's job; novada_discover lists Novada's own
+  // tools and scraper operations.
+  if (/find links/.test(m) || /\blinks on\b/.test(m)) {
+    return url ? { tool: 'novada_map', args: { url } } : { guidance: NEED_URL };
   }
-  if (/^scrape\b/.test(m) || /\bscrape\b/.test(m) || /\bextract.*from\b/.test(m) || /\bscreenshot\b/.test(m)) {
-    return { tool: 'novada_scrape', args: { url: url || 'https://example.com' } };
+  if (/\bdiscover\b/.test(m) || /what (tools|can you)\b/.test(m) || /\bcapabilities\b/.test(m)) {
+    const domain = url ? domainOf(url) : null;
+    return { tool: 'novada_discover', args: domain ? { platform: domain } : {} };
+  }
+  if (/\bscrape\b/.test(m) || /\bextract.*from\b/.test(m)) {
+    return url ? routeUrl(url) : { guidance: NEED_URL };
   }
   if (url && url.length >= msg.trim().length - 4) {
-    return { tool: 'novada_scrape', args: { url } };
+    return routeUrl(url);
   }
   if (/\bproxy\b/.test(m) || /residential ip/.test(m)) {
-    return { tool: 'novada_proxy_residential', args: { url: url || 'https://httpbin.org/ip' } };
+    const type = /\bdatacenter\b/.test(m) ? 'datacenter'
+               : /\bmobile\b/.test(m)     ? 'mobile'
+               : /\bisp\b/.test(m)        ? 'isp'
+               : 'residential';
+    return { tool: 'novada_proxy', args: { type } };
   }
   if (/\bsearch\b/.test(m) || /\bfind\b/.test(m) || /\bnews\b/.test(m) || /\blatest\b/.test(m) || /top \d/.test(m) || /^who is\b/.test(m) || /^what is\b/.test(m)) {
     return { tool: 'novada_search', args: { query: msg } };
   }
-  if (/\bresearch\b/.test(m) || /\bdeep.?dive\b/.test(m) || /\bcomprehensive\b/.test(m) || /\banalyze\b/.test(m)) {
-    return { tool: 'novada_research', args: { query: msg, depth: 'balanced' } };
-  }
-  // Default
-  return { tool: 'novada_research', args: { query: msg, depth: 'balanced' } };
+  // Anything else that names a page is about that page — work on it directly
+  // rather than researching a query string that happens to contain a link.
+  if (url) return routeUrl(url);
+  // Default — depth 'auto' lets the server pick quick vs deep ('balanced' is
+  // not a member of the depth enum and fails validation).
+  return { tool: 'novada_research', args: { query: msg, depth: 'auto' } };
 }
 
 const TOOL_ICONS = {
@@ -1041,11 +1110,9 @@ const TOOL_ICONS = {
   novada_crawl:               '🕸',
   novada_map:                 '🗺',
   novada_extract:             '📋',
-  novada_verify:              '✅',
-  novada_discover:            '🔗',
+  novada_discover:            '🧭',
   novada_research:            '📚',
-  novada_proxy_residential:   '🌐',
-  novada_proxy_datacenter:    '🏢',
+  novada_proxy:               '🌐',
 };
 function toolIcon(name) { return TOOL_ICONS[name] || '⚡'; }
 
@@ -1070,7 +1137,8 @@ function addAssistantBubble(toolName) {
   row.className = 'msg-row assistant';
 
   const logoSrc = 'https://www.novada.com/images/header/header-logo1.svg';
-  const chipHtml = `<span class="tool-chip">${toolIcon(toolName)} ${esc(toolName)}</span>`;
+  // No chip for local guidance messages — the chip means "this tool was called".
+  const chipHtml = toolName ? `<span class="tool-chip">${toolIcon(toolName)} ${esc(toolName)}</span>` : '';
   const typingHtml = `<div class="typing-indicator"><span></span><span></span><span></span></div>`;
 
   row.innerHTML = `
@@ -1172,7 +1240,17 @@ async function doSend(rawText) {
   addUserBubble(text);
 
   // Route and start assistant bubble
-  const { tool, args } = routeTool(text);
+  const route = routeTool(text);
+
+  // Some intents can't be satisfied without more input (a URL). Say so locally
+  // instead of calling a tool with placeholder arguments it would reject.
+  if (route.guidance) {
+    addAssistantBubble(null).success(isZh() ? route.guidance.zh : route.guidance.en);
+    chatInput2.focus();
+    return;
+  }
+
+  const { tool, args } = route;
   const handle = addAssistantBubble(tool);
 
   setBusy(true);
