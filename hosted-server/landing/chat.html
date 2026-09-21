@@ -68,7 +68,6 @@ function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-the
   [data-theme="light"] .composer-bar,
   [data-theme="light"] .input-area{background:var(--th-surface)!important;border-color:var(--th-vborder)!important;}
   [data-theme="light"] .chat-input,
-  [data-theme="light"] #chat-input,
   [data-theme="light"] input[type="text"],
   [data-theme="light"] input[type="password"]{background:var(--th-input-bg)!important;border-color:var(--th-input-border)!important;color:var(--th-ink)!important;}
   [data-theme="light"] input::placeholder{color:var(--th-ink-muted)!important;}
@@ -92,8 +91,8 @@ function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-the
   [data-theme="light"] .key-hint{color:var(--th-ink-muted)!important;}
   [data-theme="light"] .sugg-text{color:var(--th-ink)!important;}
   [data-theme="light"] .sugg-spark{color:var(--th-ink-muted)!important;}
-  [data-theme="light"] #chat-input{color:var(--th-ink)!important;}
-  [data-theme="light"] #chat-input::placeholder{color:var(--th-ink-muted)!important;}
+  [data-theme="light"] .chat-input{color:var(--th-ink)!important;}
+  [data-theme="light"] .chat-input::placeholder{color:var(--th-ink-muted)!important;}
   [data-theme="light"] .composer-bar{background:var(--th-surface)!important;border-color:var(--th-vborder)!important;}
   [data-theme="light"] .status-left{color:var(--th-ink-muted)!important;}
   [data-theme="light"] .status-right{color:var(--th-ink-muted)!important;}
@@ -413,8 +412,12 @@ function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-the
     border-color: rgba(108,64,226,0.5);
     box-shadow: 0 0 0 3px rgba(108,64,226,0.12);
   }
-  #chat-input {
+  /* Both composers (welcome + chat mode) share this — the textarea has to flex
+     to fill the bar, or it falls back to the UA's default ~20-column width and
+     leaves the bar half empty. */
+  .chat-input {
     flex: 1;
+    min-width: 0;
     background: transparent;
     border: none;
     outline: none;
@@ -426,7 +429,7 @@ function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-the
     max-height: 140px;
     line-height: 1.5;
   }
-  #chat-input::placeholder { color: rgba(255,255,255,0.3); }
+  .chat-input::placeholder { color: rgba(255,255,255,0.3); }
   .send-btn {
     background: #6c40e2;
     color: #ffffff;
@@ -609,6 +612,9 @@ function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-the
     white-space: pre-wrap;
     word-break: break-word;
   }
+  /* Rendered Markdown brings its own block spacing — pre-wrap would double the
+     blank lines the source already encodes as <p>/<li> gaps. */
+  .bubble-assistant.md { white-space: normal; }
 
   /* Error bubble */
   .bubble-error {
@@ -777,7 +783,7 @@ function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-the
     <!-- Chat input bar -->
     <div class="composer-wrap">
       <div class="composer-bar">
-        <textarea id="chat-input" rows="1"
+        <textarea id="chat-input" class="chat-input" rows="1"
                   placeholder="Ask me about web data, scraping, search, or anything else…"
                   data-ph-zh="询问关于网络数据、抓取、搜索的任何问题…"></textarea>
         <button class="send-btn" id="send-btn" disabled>
@@ -823,7 +829,7 @@ function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-the
     <div id="chat-composer">
       <!-- same composer bar, but this one is used in chat mode -->
       <div class="composer-bar" id="chat-composer-bar">
-        <textarea id="chat-input-2" rows="1"
+        <textarea id="chat-input-2" class="chat-input" rows="1"
                   placeholder="Ask me about web data, scraping, search, or anything else…"
                   data-ph-zh="询问关于网络数据、抓取、搜索的任何问题…"></textarea>
         <button class="send-btn" id="send-btn-2" disabled>
@@ -852,6 +858,10 @@ function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-the
 </main>
 
 <div id="toast" class="toast"></div>
+
+<!-- Markdown renderer for tool output (defines renderMarkdown / looksLikeJson,
+     and injects its own styles — this page does not load shared.css). -->
+<script src="markdown.js"></script>
 
 <script>
 'use strict';
@@ -1161,8 +1171,15 @@ function addAssistantBubble(toolName) {
     success(text) {
       responseBody.innerHTML = '';
       const p = document.createElement('div');
-      p.className = 'bubble-assistant';
-      p.textContent = text;
+      // Tools answer in Markdown — render it, except for a bare JSON payload
+      // (format:'json'), which reads better as-is in a monospaced block.
+      if (looksLikeJson(text)) {
+        p.className = 'bubble-assistant';
+        p.textContent = text;
+      } else {
+        p.className = 'bubble-assistant md';
+        p.innerHTML = renderMarkdown(text);
+      }
       responseBody.appendChild(p);
       scrollDown();
     },

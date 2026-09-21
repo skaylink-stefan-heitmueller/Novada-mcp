@@ -65,6 +65,9 @@ function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-the
   .seg button { padding: 4px 11px; font-size: 12px; font-family: 'JetBrains Mono', monospace; background: #fff; color: var(--th-ink-muted); cursor: pointer; border: none; }
   .seg button.on { background: #191228; color: #fff; }
   .codeview { background: #191228; color: #e9e4ff; font-family: 'JetBrains Mono', monospace; font-size: 12.5px; line-height: 1.6; padding: 14px 16px; overflow: auto; white-space: pre-wrap; word-break: break-word; margin: 0; }
+  /* Same surface as .codeview, but proportional type — this pane holds a
+     rendered Markdown answer, not source. Block styles come from markdown.js. */
+  .mdview { background: #191228; color: #e9e4ff; font-size: 13.5px; padding: 14px 16px; overflow: auto; margin: 0; }
   .method-chip { font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; background: #6c40e2; color: #fff; padding: 2px 8px; border-radius: 5px; letter-spacing: 0.03em; }
   .status-chip { font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700; padding: 2px 9px; border-radius: 5px; }
   .status-ok { background: #e6f7ef; color: #0b8a5a; }
@@ -193,6 +196,10 @@ function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-the
         </div>
       </div>
       <pre id="pg-output" class="codeview" style="min-height:200px; max-height:420px;"><span style="color:#677489">// Pick a tool, enter your key, hit Send.</span></pre>
+      <!-- Rendered Markdown answer. Shown instead of #pg-output for the Output
+           view; a <pre> may not contain headings/tables, so it needs its own
+           element rather than a class swap. -->
+      <div id="pg-output-md" class="mdview md" style="display:none; min-height:200px; max-height:420px;"></div>
     </div>
   </div>
 
@@ -210,6 +217,9 @@ function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-the
 <div id="toast" class="toast">Copied ✓</div>
 
 <script src="shared.js" defer></script>
+<!-- Not deferred: the inline script below is a classic script that runs before
+     any deferred file, and it calls renderMarkdown / looksLikeJson. -->
+<script src="markdown.js"></script>
 <script>
   const isZh = () => document.body.classList.contains('lang-zh');
   // Re-render playground UI after language toggle (shared.js handles the class swap)
@@ -228,6 +238,7 @@ function toggleTheme(){var h=document.documentElement,n=h.getAttribute('data-the
   const pgArgsEl = document.getElementById('pg-args');
   const pgRunBtn = document.getElementById('pg-run');
   const pgOutput = document.getElementById('pg-output');
+  const pgOutputMd = document.getElementById('pg-output-md');
   const pgStatus = document.getElementById('pg-status');
   const pgMeta = document.getElementById('pg-meta');
   const pgHint = document.getElementById('pg-hint');
@@ -374,10 +385,28 @@ https://www.brightdata.com/pricing</textarea></div>`,
 
   // ── response view (Output / JSON) ──
   let respView = 'pretty'; let lastResult = null;
+  /** Source text behind whatever is on screen — what Copy should yield. */
+  function currentText(){
+    if (!lastResult) return pgOutput.textContent;
+    return respView === 'raw' ? JSON.stringify(lastResult.full, null, 2) : lastResult.pretty;
+  }
+  function showSource(text){
+    pgOutput.textContent = text;
+    pgOutput.style.display = '';
+    pgOutputMd.style.display = 'none';
+  }
+  function showRendered(markdown){
+    pgOutputMd.innerHTML = renderMarkdown(markdown);
+    pgOutputMd.style.display = '';
+    pgOutput.style.display = 'none';
+  }
   function renderResp(){
     if (!lastResult) return;
-    if (respView === 'raw') { pgOutput.textContent = JSON.stringify(lastResult.full, null, 2); }
-    else { pgOutput.textContent = lastResult.pretty; }
+    // Tools answer in Markdown, so the Output view renders it. A bare JSON
+    // payload (format:'json') and the JSON view stay as monospaced source.
+    if (respView === 'raw') showSource(JSON.stringify(lastResult.full, null, 2));
+    else if (looksLikeJson(lastResult.pretty)) showSource(lastResult.pretty);
+    else showRendered(lastResult.pretty);
   }
   document.getElementById('pg-resp-view').addEventListener('click', e => {
     const b=e.target.closest('button[data-rview]'); if(!b) return; respView=b.dataset.rview;
@@ -408,7 +437,7 @@ https://www.brightdata.com/pricing</textarea></div>`,
     pgRunBtn.disabled = true;
     pgRunBtn.querySelector('.pg-run-label').innerHTML = '⏳ '+(isZh()?'发送中…':'Sending…');
     pgStatus.textContent='…'; pgStatus.className='status-chip status-idle'; pgMeta.textContent='';
-    pgOutput.textContent = isZh()?'请求 mcp.novada.com 中…':'Calling mcp.novada.com…';
+    showSource(isZh()?'请求 mcp.novada.com 中…':'Calling mcp.novada.com…');
     const t0 = performance.now();
     try {
       const res = await fetch(`${PG_ENDPOINT}?token=${encodeURIComponent(token)}`, {
@@ -435,7 +464,7 @@ https://www.brightdata.com/pricing</textarea></div>`,
     }
   });
   document.getElementById('pg-copy').addEventListener('click', async () => {
-    try{ await navigator.clipboard.writeText(pgOutput.textContent); showToast('Copied ✓'); }catch{ showToast('Copy failed'); }
+    try{ await navigator.clipboard.writeText(currentText()); showToast('Copied ✓'); }catch{ showToast('Copy failed'); }
   });
 
   // init

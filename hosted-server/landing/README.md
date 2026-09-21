@@ -11,6 +11,13 @@ the function). These pages are a different artifact on a different origin; the
 playground and chat reach the MCP endpoint as ordinary cross-origin `fetch`
 calls from the visitor's browser.
 
+`markdown.js` renders the Markdown that tools return, for `/chat` and the
+playground's Output view. It escapes every text run before building any tag,
+allows only `http`/`https`/`mailto` links and never emits an `<img>` — tool
+responses carry scraped third-party content, so they are treated as untrusted.
+It also injects its own stylesheet, because `chat.html` is standalone and does
+not load `shared.css`.
+
 ## Build
 
 ```bash
